@@ -1,0 +1,372 @@
+/*
+File: Automatic car parking
+Main Function: A four parking place car park with an door and billing system
+Other: use Bluetooth to transmit data 
+Author: Ziqi Wang, Xueyuan Liu
+Date: 15th June, 2017
+License:  This work is licensed under the Creative Commons Attribution 4.0 International License. To view a copy of this license, visit http://creativecommons.org/licenses/by/4.0/
+*/
+
+/*   
+libraries cited as follows:
+* <LiquidCrystal.h>: https://github.com/arduino-libraries/LiquidCrystal (GNU General Public License, for more details see:http://www.gnu.org/licenses/) 
+
+                     Copyright Â© 2006-2008 Hans-Christoph Steiner. All rights reserved. Copyright (c) 2010 Arduino LLC. All right reserved. 
+
+* <Stepper.h>:https://arduino-info.wikispaces.com/SmallSteppers
+Part of code is referenced to: https://github.com/Electromania/Arduino-Due/blob/master/Quick-Projects/Clock%20and%20calendar%20on%20LCD%20using%20Arduino%20Due%20internal%20RTC 
+
+*/  
+
+
+#include <Stepper.h> //for stepper motor
+#include <LiquidCrystal.h>
+
+#define blueToothSerial   Serial2
+#define STEPS_PER_MOTOR_REVOLUTION 32   //---( Number of steps per revolution of INTERNAL motor in 4-step mode )---
+#define STEPS_PER_OUTPUT_REVOLUTION 32 * 64   //---( Steps per OUTPUT SHAFT of gear reduction )--- //2048  
+#define Button 22
+
+const int num_of_leds = 6;
+
+Stepper small_stepper(STEPS_PER_MOTOR_REVOLUTION, 8, 10, 9, 11);
+int  Steps2Take;
+int PhotoRs[num_of_leds] = {A2, A3, A4, A5, A6, A7};
+LiquidCrystal lcd( 12, 13, 4, 5, 6, 7);
+
+volatile int leftnum=0;
+volatile int money=0;
+int Val[num_of_leds]={0, 0, 0, 0, 0, 0};
+unsigned long times[]={0,0,0,0,0,0};
+static int I;
+int int_has_happened = false;
+int int_interrupt_BegainTime = false;
+int int_interrupt_FinishTime=false;
+int int_interrupt_FinishPayment=false;
+int ButtonState=0;
+struct BluetoothMessage{      
+  String str;
+  int x;
+};
+//typedef struct BluetoothMessage BluetoothMessage;
+
+
+// Setup functions
+
+void setupBlueToothConnection()
+{
+    blueToothSerial.begin(38400);                           // Set BluetoothBee BaudRate to default baud rate 38400
+    blueToothSerial.print("\r\n+STWMOD=0\r\n");             // set the bluetooth work in slave mode
+    blueToothSerial.print("\r\n+STNA=billing\r\n");    // set the bluetooth name as "SeeedBTSlave"
+    blueToothSerial.print("\r\n+STOAUT=1\r\n");             // Permit Paired device to connect me
+    blueToothSerial.print("\r\n+STAUTO=0\r\n");             // Auto-connection should be forbidden here
+    blueToothSerial.print("\r\n+STPIN=1234\r\n");
+    delay(2000);                                            // This delay is required.
+    blueToothSerial.print("\r\n+INQ=1\r\n");                // make the slave bluetooth inquirable
+    delay(2000);                                            // This delay is required.
+    blueToothSerial.flush();
+
+//while(blueToothSerial.available()){
+//  blueToothSerial.read();
+//  }
+}
+
+void PhotoRsetup() {
+  // put your setup code here, to run once:
+  for(int i=0;i<num_of_leds;i++)
+  {
+    pinMode(PhotoRs[i],INPUT);
+    }
+    Serial.println("1start");
+}
+/*
+void RBlueTsetup() {
+ // put your setup code here, to run once:
+  Serial.begin(9600);
+  Serial.setTimeout(-1);
+}
+*/
+
+//   main functions
+
+void ReadPhotoR() { 
+Serial.println("ReadPhotoR()");
+Serial.flush();
+for(int i=0;i<num_of_leds;i++)
+ {  
+  Val[i] = analogRead(PhotoRs[i]);    //浠庝紶鎰熷櫒璇诲彇鍊?
+  Serial.print(i);
+  Serial.print(": ");
+//  Serial.println(Val[i]);
+
+ 
+  if(Val[i]<=100)
+  {  
+     Serial.print(Val[i]);
+      Val[i]=1;
+      Serial.println(" 1");    
+  }
+   //  512=2.5V锛屾兂璁╀紶鎰熷櫒鏁忔劅涓€浜涚殑鏃跺€欙紝鎶婃暟鍊艰皟楂橈紝    鎯宠浼犳劅鍣ㄨ繜閽濈殑鏃跺€欐妸鏁板€艰皟浣庛€?//    digitalWrite(ledPin, LOW);//褰撳厜鐓у己搴﹁繃寮烘椂led鐏€?
+  else
+  {
+    Serial.print(Val[i]);
+     Val[i]=0;  
+      Serial.println(" 0");
+    }
+}
+Serial.flush();
+delay(100);
+}
+
+void DoorOpenColse()  //the door function 
+{
+  Serial.print("Stepper doing 1");
+  small_stepper.setSpeed(1);   // SLOWLY Show the 4 step sequence 
+  Steps2Take  =  4;  // Rotate CW
+  small_stepper.step(Steps2Take);
+  delay(200);
+
+  Serial.print("Stepper doing 2");
+  Steps2Take  =  STEPS_PER_OUTPUT_REVOLUTION / 4;  // Rotate CW 1/2 turn
+  small_stepper.setSpeed(700);   
+  small_stepper.step(Steps2Take);
+  delay(2000);
+  
+    Serial.print("Stepper doing 3");
+  Steps2Take  =  - STEPS_PER_OUTPUT_REVOLUTION / 4;  // Rotate CCW 1/2 turn  
+  small_stepper.setSpeed(700);  // 700 a good max speed??
+  small_stepper.step(Steps2Take);
+
+   Serial.print("xxx");
+   delay(2000);
+
+  Serial.print("Stepper done");
+}
+
+
+struct BluetoothMessage read_from_serial() {
+  
+  String input = blueToothSerial.readStringUntil(' ');
+  String input2 = blueToothSerial.readStringUntil('\n');
+
+  int parking_number = input2.toInt();
+
+  BluetoothMessage ret;
+  ret.x = parking_number;
+  ret.str = input;
+
+  return ret;
+}
+
+/*
+void loop() {
+  // put your main code here, to run repeatedly:
+
+  BluetoothMessage msg = read_from_serial();
+
+  Serial.print("Input 1:");
+  Serial.println(msg.str);
+
+  Serial.print("Input 2:");
+  Serial.println(msg.x);
+}
+*/
+
+
+void printbill(){
+  //  while (blueToothSerial.available() > 0)
+  //{
+    blueToothSerial.print("you should pay $");
+    blueToothSerial.print(money);
+ //}
+ Serial.flush();
+}
+
+
+
+void pio_interrupt_handler() {
+  int_has_happened = true;
+}
+
+void Flash(){
+int a=0;
+int i=0;
+ReadPhotoR();
+Serial.println("Uptading LCD");
+Serial.flush();
+for(i=2;i<num_of_leds;i++)
+  {
+    if(Val[i]==0)
+      {
+        a++;
+        }
+    }
+
+   Serial.print("have m:");
+ Serial.print(a);
+  Serial.print("cleaar");
+ 
+lcd.setCursor(0, 0);
+ Serial.flush();
+ lcd.clear();
+ Serial.print("cleaar2");    
+    Serial.flush();
+   lcd.print("   left places:");
+   lcd.print(a);//control LCD print 'a places are available' '
+
+   Serial.println("done Uptading LCD");
+Serial.flush();
+
+}
+void interrupt_BegainTime(){
+
+int_interrupt_BegainTime = true;
+  
+}
+
+  
+void BegainTime(){
+Serial.flush();
+
+ Serial.print("bEGIN TIMINIG ");
+ Serial.println(I);
+times[I]=millis();
+ Serial.println(times[I]);
+ Serial.flush();
+}
+
+void interrupt_FinishTime(){
+
+int_interrupt_FinishTime = true;
+  
+}
+
+void FinishTime(){
+Serial.flush();
+unsigned long int ftime;
+ftime = millis(); 
+Serial.print("finish TIMINIG ");
+ Serial.println(I);
+times[I]=ftime - times[I];
+ Serial.println(times[I]);
+money=0.01*times[I];
+printbill();
+Serial.flush();
+}
+
+void interrupt_FinishPayment(){
+
+int_interrupt_FinishPayment = true;
+  
+}
+
+void FinishPayment(){
+if (Val[1]==1)
+  {
+    Serial.println("Opening door");
+    DoorOpenColse();
+    Serial.println("Opening door done");
+    }
+else
+  {
+    Serial.println("Just a delay");
+    delay(2000);  
+    }
+}
+
+void setup() {
+  // put your setup code here, to run once:
+  Serial.begin(9600);
+  setupBlueToothConnection();
+  blueToothSerial.print("which place do you want?");
+  lcd.begin(16, 2);
+  lcd.setCursor(0, 0);
+  pinMode(Button,INPUT);
+  ButtonState=digitalRead(Button);
+  PhotoRsetup();
+  ReadPhotoR();
+ // RBlueTsetup();
+  for(I=2;I<6;I++)
+    {
+      attachInterrupt(digitalPinToInterrupt(PhotoRs[I]), pio_interrupt_handler,CHANGE);
+      attachInterrupt(digitalPinToInterrupt(PhotoRs[I]),interrupt_BegainTime,RISING);
+      attachInterrupt(digitalPinToInterrupt(PhotoRs[I]),interrupt_FinishTime,FALLING);
+    }
+attachInterrupt(digitalPinToInterrupt(Button),interrupt_FinishPayment,CHANGE);
+
+}
+
+
+void loop() {
+  // put your main code here, to run repeatedly:
+ReadPhotoR();
+
+Serial.println("Flashing");
+Flash();
+
+Serial.println("Getting BT message");
+BluetoothMessage msg;
+
+
+if ( int_has_happened) {
+  Serial.println("Int has happened. Flashing.");
+  Flash();
+  int_has_happened = false;
+}
+
+if ( int_interrupt_BegainTime) {
+  Serial.println("begain Time.");
+  BegainTime();
+  int_interrupt_BegainTime = false;
+  Serial.println("begain Time2.");
+  Serial.println(times[I]);
+}
+  Serial.println(times[I]);
+if ( int_interrupt_FinishTime) {
+  Serial.println("FinishTime.");
+  FinishTime();
+  int_interrupt_FinishTime = false;
+    Serial.println("FinishTime2.");
+    Serial.println(times[I]);
+}
+  Serial.println(times[I]);
+
+if ( int_interrupt_FinishPayment) {
+  Serial.println("FinishPayment.");
+  FinishPayment();
+  int_interrupt_FinishPayment = false;
+}
+
+Serial.println("2sending stuff to BT");
+
+msg.x = 6;
+Serial.println(msg.x);
+
+if(blueToothSerial.available()){
+ {
+  msg =  read_from_serial();
+}
+
+if(Val[msg.x]==0)
+  {
+    blueToothSerial.println("place is availible");   // return to bluetooth slave 'palce is availible'
+   
+    }
+else
+  {
+    blueToothSerial.println("place is unavailible");     // return this 'palce is not availible'
+   
+     }
+}
+if (Val[0]==1)
+  {
+    
+Serial.println("door");
+      DoorOpenColse();
+    }
+    
+   for(int n=0;n<6;n++){
+      Serial.println(n);
+    Serial.print(times[n]);
+    }
+}
