@@ -1,4 +1,4 @@
-/*
+ /*
 File: Automatic car parking
 Main Function: A four parking place car park with an door and billing system
 Other: use Bluetooth to transmit data 
@@ -15,7 +15,7 @@ libraries cited as follows:
 
 * <Stepper.h>:https://arduino-info.wikispaces.com/SmallSteppers
 Part of code is referenced to: https://github.com/Electromania/Arduino-Due/blob/master/Quick-Projects/Clock%20and%20calendar%20on%20LCD%20using%20Arduino%20Due%20internal%20RTC 
-
+                               https://arduino-info.wikispaces.com/SmallSteppers
 */  
 
 
